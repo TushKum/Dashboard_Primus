@@ -89,8 +89,8 @@ function statusHtml() {
 
 function cardHtml(round) {
   const c = state.cards;
-  if (round === 1 && c.problem) return `<div class="cardbox"><b>Problem card ${c.problem.number}: ${esc(c.problem.title)}</b>${esc(c.problem.body)}</div>`;
-  if (round === 2 && c.crisis) return `<div class="cardbox"><b>Crisis card: ${esc(c.crisis.title)}</b>${esc(c.crisis.body)}</div>`;
+  if (round === 1 && c.problem) return `<div class="cardbox"><b>Round 1 case: ${esc(c.problem.title)}</b><div class="casebody">${esc(c.problem.body)}</div></div>`;
+  if (round === 2 && c.crisis) return `<div class="cardbox"><b>Round 2 crisis: ${esc(c.crisis.title)}</b><div class="casebody">${esc(c.crisis.body)}</div></div>`;
   return "";
 }
 
@@ -110,7 +110,6 @@ function roundHtml(round, locked) {
   return `<section class="card" data-round="${round}">
     <div class="row"><h2 class="grow">Round ${round}: ${NAMES[round]}</h2>${locked ? '<span class="pill warn">Locked</span>' : '<span class="pill">Open</span>'}</div>
     ${cardHtml(round)}
-    ${round === 2 && state.submissions[1]?.content.cost ? `<p class="small muted">Your Round 1 cost per pack was ₹${esc(state.submissions[1].content.cost)}.</p>` : ""}
     ${form.fields.map((f) => fieldHtml(round, f, content[f.key] ?? "", locked)).join("")}
     <div class="row" style="margin-top:14px">
       <span class="small muted grow" data-words>0 / ${form.wordLimit} words</span>

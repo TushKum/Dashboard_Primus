@@ -9,23 +9,22 @@ describe("word limits", () => {
     expect(FORMS[2].wordLimit).toBe(400);
   });
   it("count every text field together, but not names or amounts", () => {
-    const c = checkForm(1, { company: "Milletbite Foods", problem: words(400), product: words(400), cost: "4.50" });
+    const c = checkForm(1, { brand: "VoltRide", product: words(400), audience: words(400) });
     expect(c.words).toBe(800);
     expect(c.errors).toEqual([]);
-    expect(checkForm(1, { problem: words(400), product: words(401) }).errors).toContain("801 words: the limit is 800");
-    expect(checkForm(2, { diagnosis: words(401) }).errors).toContain("401 words: the limit is 400");
-    expect(checkForm(2, { diagnosis: words(400) }).errors).toEqual([]);
+    expect(checkForm(1, { product: words(400), audience: words(401) }).errors).toContain("801 words: the limit is 800");
+    expect(checkForm(2, { technology: words(401) }).errors).toContain("401 words: the limit is 400");
+    expect(checkForm(2, { technology: words(400) }).errors).toEqual([]);
   });
   it("allow a partial save and list what is still empty", () => {
-    const c = checkForm(2, { diagnosis: "A cost problem." });
+    const c = checkForm(2, { technology: "Warn at 2 minutes left, then slow to a safe stop." });
     expect(c.errors).toEqual([]);
-    expect(c.missing).toContain("Recommendation");
+    expect(c.missing).toContain("Customer retention");
   });
   it("check amounts", () => {
     expect(parseRupees("4.50")).toBe(450);
     expect(parseRupees("₹1,200")).toBe(120000);
     expect(parseRupees("abc")).toBeNull();
-    expect(checkForm(1, { cost: "cheap" }).errors).toContain("Cost to make one pack (₹) must be an amount like 4.50");
   });
 });
 

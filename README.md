@@ -10,10 +10,13 @@ There is no database server to set up and no build step.
 
 ## The two rounds
 
-| Round | Default time | Card | What a team writes | Word limit |
+The case is the ZIPGO Mobility Case Competition, the same for every team. Each team sees a round's brief only when
+that round opens, so nobody can read the crisis early.
+
+| Round | Default time | Brief | What a team writes | Word limit |
 |---|---|---|---|---|
-| 1. Product | 60 min | Problem card | Company name, problem, product, target buyer, why it wins, where it sells, cost and price per pack, how it makes money, risks | 800 |
-| 2. Crisis | 45 min | Crisis card | Diagnosis, options, recommendation, cost per pack after the crisis and after the fix, timeline, biggest risk | 400 |
+| 1. Product | 60 min | Build the next affordable urban mobility brand (an electric mobility startup for students and young professionals) | Brand name, product or service and its USP, target audience, pricing, marketing and competition, how it makes money, expansion to more cities | 800 |
+| 2. Crisis | 45 min | The Unrestricted Ride: ZIPGO's bicycles keep running after the paid time and customers are charged extra | Technology, pricing, customer retention, revenue, financial viability, the revised business model | 400 |
 
 A briefing (default 15 minutes) comes first; all three durations can be changed in the console. The word limit counts
 every text field of the round together (names and ₹ amounts are not counted). The form saves as teams type and locks
@@ -32,19 +35,20 @@ npm start                 # http://localhost:3000 for teams, http://localhost:30
 ## On the day
 
 1. **Before:** open `/admin`. Import the teams (CSV `code,name`), set the start time and durations, check the cards
-   (sample decks load on first start; replace them under Cards), then **Deal cards**. Download the login sheet and
+   (sample decks the ZIPGO case loads on first start), then **Hand out the case**. Download the login sheet and
    hand each team its code and password. Passwords come from `LOGIN_SECRET`, so the sheet can be reprinted any time.
-2. **During:** teams sign in at `/`. Each round's card appears when the round opens. The Submissions table shows each
+2. **During:** teams sign in at `/`. Each round's brief appears when the round opens. The Submissions table shows each
    team's word count, whether every field is filled in, and when it last saved.
 3. **After:** click a team code to read its work in full, or **Download all (CSV)**: one row per team, one column per
-   field, with the cards each team got.
+   field, with the brief each team got.
 
-## Cards
+## The case
 
-- `data/problem-cards.csv`: `number,title,body` (12 samples)
-- `data/crisis-cards.csv`: `number,category,title,body` (8 samples)
+- `data/problem-cards.csv`: the Round 1 brief (`number,title,body`)
+- `data/crisis-cards.csv`: the Round 2 crisis (`number,category,title,body`)
 
-Each team gets one of each, spread evenly at random. Cards can be replaced and re-dealt until Round 1 opens.
+These load into a new database on first start. To use a different case, upload new CSVs in the console under Case
+(several rows per file spread different briefs evenly across teams), then hand it out again before Round 1 opens.
 
 ## Develop
 

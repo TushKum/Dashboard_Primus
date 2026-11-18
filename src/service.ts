@@ -39,7 +39,7 @@ export function createService(db: Db, opts: { random?: () => number } = {}) {
 
     save(team: TeamRow, round: RoundNo, content: Content, now: number) {
       if (!roundIsOpen(db.startsAt(), round, now, db.timetable())) throw new ActionError(`Round ${round} is not open: the form is locked.`, 409);
-      if (!db.dealFor(team.id)) throw new ActionError("Your cards have not been dealt yet. Tell an organiser.", 409);
+      if (!db.dealFor(team.id)) throw new ActionError("The case has not been handed out to your team yet. Tell an organiser.", 409);
       const check = checkForm(round, content);
       if (check.errors.length) throw new ActionError(check.errors.join(". "));
       const complete = check.missing.length === 0;
@@ -48,12 +48,12 @@ export function createService(db: Db, opts: { random?: () => number } = {}) {
     },
 
     deal(now: number, force = false) {
-      if (!force && roundOpened(db.startsAt(), 1, now, db.timetable())) throw new ActionError("Round 1 has started: the cards can no longer be re-dealt.", 409);
+      if (!force && roundOpened(db.startsAt(), 1, now, db.timetable())) throw new ActionError("Round 1 has started: the case can no longer be handed out again.", 409);
       const teams = db.teams();
       const problems = db.problemCards();
       const crises = db.crisisCards();
       if (!teams.length) throw new ActionError("Import the teams first.");
-      if (!problems.length || !crises.length) throw new ActionError("Load the problem and crisis cards first.");
+      if (!problems.length || !crises.length) throw new ActionError("Load the Round 1 case and the Round 2 crisis first.");
       const p = dealEvenly(shuffle(teams.map((t) => String(t.id)), random), problems);
       const c = dealEvenly(shuffle(teams.map((t) => String(t.id)), random), crises);
       db.replaceDeals(teams.map((t) => ({ teamId: t.id, problem: p.get(String(t.id))!.number, crisis: c.get(String(t.id))!.number })));

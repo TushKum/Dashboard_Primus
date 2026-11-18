@@ -105,31 +105,29 @@ export interface Field {
 }
 
 export const FORMS: Record<RoundNo, { wordLimit: number; fields: readonly Field[] }> = {
+  // The case's six decisions (brand name, product, audience, pricing, marketing, revenue), plus expansion.
   1: {
     wordLimit: 800,
     fields: [
-      { key: "company", label: "Company name", hint: "For example MilletBite", kind: "short", counted: false },
-      { key: "problem", label: "Problem", hint: "Who has the problem, how many of them, and why current products fail them", kind: "text", counted: true },
-      { key: "product", label: "Product", hint: "What it is, its pack size, and the features it cannot launch without", kind: "text", counted: true },
-      { key: "buyer", label: "Target buyer", hint: "The exact buyer, e.g. working women aged 25 to 40 in metro cities", kind: "text", counted: true },
-      { key: "whyWins", label: "Why it wins", hint: "What makes it better or cheaper than what shoppers buy today", kind: "text", counted: true },
-      { key: "whereSells", label: "Where it sells", hint: "The first shops or apps that will stock it, and how it gets there", kind: "text", counted: true },
-      { key: "cost", label: "Cost to make one pack (₹)", hint: "Your estimate, e.g. 4.50", kind: "rupees", counted: false },
-      { key: "price", label: "Price on the pack (₹)", hint: "The MRP you would print, e.g. 10", kind: "rupees", counted: false },
-      { key: "money", label: "How it makes money", hint: "Price → what reaches you after tax and shop margins → cost → margin", kind: "text", counted: true },
-      { key: "risks", label: "Risks", hint: "The biggest things that could go wrong, and your plan for each", kind: "text", counted: true },
+      { key: "brand", label: "03 · Brand name", hint: "What will you name your brand?", kind: "short", counted: false },
+      { key: "product", label: "01 · Product or service", hint: "What are you launching, and what is its unique selling point compared to existing electric scooters?", kind: "text", counted: true },
+      { key: "audience", label: "02 · Target audience", hint: "Which college students and young professionals, in which cities, making which short trips?", kind: "text", counted: true },
+      { key: "pricing", label: "04 · Pricing", hint: "What will riders pay, and how does it compare with autos, cabs and other e-mobility options?", kind: "text", counted: true },
+      { key: "marketing", label: "05 · Marketing and competition", hint: "How will you market it and compete with existing brands?", kind: "text", counted: true },
+      { key: "revenue", label: "06 · How you make money", hint: "Your revenue model, main costs and path to profit", kind: "text", counted: true },
+      { key: "expansion", label: "Expansion", hint: "How the model realistically expands to more Indian cities", kind: "text", counted: true },
     ],
   },
+  // ZIPGO's crisis: the five challenge areas, then the revised model in brief.
   2: {
     wordLimit: 400,
     fields: [
-      { key: "diagnosis", label: "Diagnosis", hint: "The real cause of the damage, in one or two lines", kind: "text", counted: true },
-      { key: "options", label: "Options", hint: "At least two genuinely different fixes, each with its effect on cost per pack", kind: "text", counted: true },
-      { key: "recommendation", label: "Recommendation", hint: "Which option you choose and why it beats the others", kind: "text", counted: true },
-      { key: "costAfterCrisis", label: "Cost per pack after the crisis (₹)", hint: "Before your fix", kind: "rupees", counted: false },
-      { key: "costAfterFix", label: "Cost per pack after your fix (₹)", hint: "Once your fix is working", kind: "rupees", counted: false },
-      { key: "timeline", label: "Timeline", hint: "What happens each week until the fix is working", kind: "text", counted: true },
-      { key: "risk", label: "Biggest risk", hint: "What could go wrong with your fix, and what you would do", kind: "text", counted: true },
+      { key: "technology", label: "Technology", hint: "How should the bicycle respond when the paid riding duration expires?", kind: "text", counted: true },
+      { key: "pricing", label: "Pricing", hint: "Alerts, a grace period, automatic extensions or a different pricing structure?", kind: "text", counted: true },
+      { key: "retention", label: "Customer retention", hint: "How will ZIPGO stop customers switching to competitors?", kind: "text", counted: true },
+      { key: "revenue", label: "Revenue", hint: "How can ZIPGO charge fairly for extra usage without discouraging repeat rides?", kind: "text", counted: true },
+      { key: "viability", label: "Financial viability", hint: "How can ZIPGO roll this out across its fleet while controlling costs?", kind: "text", counted: true },
+      { key: "model", label: "Revised business model", hint: "Your revised model in brief: transparency, customer experience, retention and profitability", kind: "text", counted: true },
     ],
   },
 };

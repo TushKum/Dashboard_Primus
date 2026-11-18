@@ -66,7 +66,7 @@ describe("a screening session", () => {
     expect((await call("/api/admin/teams", { csv: "code,name\nS001,Team Alpha\nS002,Team Beta\n", cookie: admin })).json.teams).toBe(2);
     const s = await call("/api/admin/settings", { body: { startsAt: new Date(START).toISOString(), briefingMinutes: 15, round1Minutes: 60, round2Minutes: 45 }, cookie: admin });
     expect(s.status).toBe(200);
-    expect((await call("/api/admin/deal", { body: {}, cookie: admin })).json).toEqual({ teams: 2, problemCards: 12, crisisCards: 8 });
+    expect((await call("/api/admin/deal", { body: {}, cookie: admin })).json).toEqual({ teams: 2, problemCards: 1, crisisCards: 1 });
     expect((await call("/api/admin/logins.csv", { cookie: admin })).json).toContain(`S001,Team Alpha,${teamPassword("test-login", "S001")}`);
   });
 
@@ -84,7 +84,7 @@ describe("a screening session", () => {
     const s = await call("/api/team/state", { cookie: teams.S001 });
     expect(s.json.stage.stage).toBe("BRIEFING");
     expect(s.json.cards.problem).toBeNull();
-    expect((await call("/api/team/round/1", { method: "PUT", body: { content: { problem: "x" } }, cookie: teams.S001 })).status).toBe(409);
+    expect((await call("/api/team/round/1", { method: "PUT", body: { content: { product: "x" } }, cookie: teams.S001 })).status).toBe(409);
   });
 
   it("takes the product up to 800 words and refuses more", async () => {
@@ -93,37 +93,38 @@ describe("a screening session", () => {
     expect(s.json.stage).toMatchObject({ stage: "ROUND", round: 1 });
     expect(s.json.cards.problem.title).toBeTruthy();
     expect(s.json.cards.crisis).toBeNull();
-    const over = await call("/api/team/round/1", { method: "PUT", body: { content: { problem: words(500), product: words(301) } }, cookie: teams.S001 });
+    const over = await call("/api/team/round/1", { method: "PUT", body: { content: { product: words(500), audience: words(301) } }, cookie: teams.S001 });
     expect(over.status).toBe(400);
     expect(over.json.error).toContain("801 words");
-    const ok = await call("/api/team/round/1", { method: "PUT", body: { content: { company: "MilletBite", problem: words(500), product: words(300), cost: "4.50" } }, cookie: teams.S001 });
+    const ok = await call("/api/team/round/1", { method: "PUT", body: { content: { brand: "VoltRide", product: words(500), audience: words(300) } }, cookie: teams.S001 });
     expect(ok.json).toMatchObject({ words: 800, complete: false });
-    expect((await call("/api/team/round/2", { method: "PUT", body: { content: { diagnosis: "x" } }, cookie: teams.S001 })).status).toBe(409);
+    expect((await call("/api/team/round/2", { method: "PUT", body: { content: { technology: "x" } }, cookie: teams.S001 })).status).toBe(409);
   });
 
   it("locks Round 1 and opens the crisis with a 400-word limit", async () => {
     clock = START + 80 * MIN;
-    expect((await call("/api/team/round/1", { method: "PUT", body: { content: { problem: "late" } }, cookie: teams.S001 })).status).toBe(409);
+    expect((await call("/api/team/round/1", { method: "PUT", body: { content: { product: "late" } }, cookie: teams.S001 })).status).toBe(409);
     const s = await call("/api/team/state", { cookie: teams.S001 });
-    expect(s.json.cards.crisis.title).toBeTruthy();
-    expect((await call("/api/team/round/2", { method: "PUT", body: { content: { diagnosis: words(401) } }, cookie: teams.S001 })).status).toBe(400);
-    const ok = await call("/api/team/round/2", { method: "PUT", body: { content: { diagnosis: words(400) } }, cookie: teams.S001 });
+    expect(s.json.cards.crisis.body).toContain("₹100 ride package");
+    expect((await call("/api/team/round/2", { method: "PUT", body: { content: { technology: words(401) } }, cookie: teams.S001 })).status).toBe(400);
+    const ok = await call("/api/team/round/2", { method: "PUT", body: { content: { technology: words(400) } }, cookie: teams.S001 });
     expect(ok.json.words).toBe(400);
   });
 
   it("shows organisers every submission and exports them as CSV", async () => {
     clock = START + 130 * MIN;
-    expect((await call("/api/team/round/2", { method: "PUT", body: { content: { diagnosis: "late" } }, cookie: teams.S001 })).status).toBe(409);
+    expect((await call("/api/team/round/2", { method: "PUT", body: { content: { technology: "late" } }, cookie: teams.S001 })).status).toBe(409);
     const st = (await call("/api/admin/state", { cookie: admin })).json;
     const alpha = st.teams.find((t: any) => t.code === "S001");
     expect(alpha.rounds[1].words).toBe(800);
     expect(alpha.rounds[2].words).toBe(400);
     expect(st.teams.find((t: any) => t.code === "S002").rounds[1]).toBeNull();
     const detail = (await call("/api/admin/team/S001", { cookie: admin })).json;
-    expect(detail.rounds[0].submission.content.company).toBe("MilletBite");
+    expect(detail.rounds[0].submission.content.brand).toBe("VoltRide");
+    expect(detail.crisis.title).toContain("ZIPGO");
     const rows = parseCsv((await call("/api/admin/submissions.csv", { cookie: admin })).json);
     expect(rows).toHaveLength(2);
-    expect(rows[0]).toMatchObject({ code: "S001", r1_words: "800", r1_company: "MilletBite", r1_cost: "4.50", r2_words: "400" });
+    expect(rows[0]).toMatchObject({ code: "S001", r1_words: "800", r1_brand: "VoltRide", r2_words: "400", problem_card: "Build the next affordable urban mobility brand" });
     expect(rows[1]).toMatchObject({ code: "S002", r1_words: "" });
   });
 });

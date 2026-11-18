@@ -92,18 +92,18 @@ function build() {
   </section>
 
   <section class="card">
-    <h2>3. Cards</h2>
+    <h2>3. Case</h2>
     <p class="small" id="cards-summary"></p>
     <div class="row">
       <div class="grow"><label for="card-kind">Replace</label>
-        <select id="card-kind"><option value="problem">Problem cards (CSV: number,title,body)</option><option value="crisis">Crisis cards (CSV: number,category,title,body)</option></select></div>
+        <select id="card-kind"><option value="problem">Round 1 case (CSV: number,title,body)</option><option value="crisis">Round 2 crisis (CSV: number,category,title,body)</option></select></div>
       <div><label for="card-file">File</label><input type="file" id="card-file" accept=".csv,text/csv" style="width:auto" /></div>
     </div>
     <div class="row" style="margin-top:10px"><button id="upload-cards">Upload</button></div>
     <p class="status" id="s-cards"></p>
-    <h3>Deal</h3>
-    <p class="small muted">Gives every team one problem card and one crisis card, spread evenly and at random. Re-deal is allowed until Round 1 opens.</p>
-    <div class="row"><button id="deal">Deal cards</button><span class="small" id="dealt"></span></div>
+    <h3>Hand out</h3>
+    <p class="small muted">Gives every team its Round 1 case and Round 2 crisis (with one of each loaded, everyone gets the same). Each team sees them only when its round opens. Re-deal is allowed until Round 1 opens.</p>
+    <div class="row"><button id="deal">Hand out the case</button><span class="small" id="dealt"></span></div>
     <p class="status" id="s-deal"></p>
   </section>
 
@@ -139,8 +139,8 @@ function build() {
     act("s-cards", async () => api(`/api/admin/cards/${$("#card-kind").value}`, { method: "POST", csv: true, body: await f.text() }), "Cards replaced.");
   };
   $("#deal").onclick = () => {
-    if (state.dealt && !confirm("Cards are already dealt. Deal again? Every team gets new cards.")) return;
-    act("s-deal", () => api("/api/admin/deal", { method: "POST", body: "{}" }), (r) => `Dealt to ${r.teams} teams.`);
+    if (state.dealt && !confirm("The case is already handed out. Hand it out again?")) return;
+    act("s-deal", () => api("/api/admin/deal", { method: "POST", body: "{}" }), (r) => `Handed out to ${r.teams} teams.`);
   };
   $("#starts").value = state.startsAt ? localInput(state.startsAt) : "";
 }
@@ -155,13 +155,13 @@ function refresh() {
   $("#timeline").innerHTML = state.windows.length
     ? state.windows.map((w) => esc(`Round ${w.round} (${NAMES[w.round]}): ${fmt(w.opensAt)} → ${hm(w.closesAt)}`)).join("<br>")
     : "No start time set.";
-  $("#cards-summary").textContent = `${state.cards.problem} problem cards and ${state.cards.crisis} crisis cards loaded.`;
-  $("#dealt").textContent = state.dealt ? `Dealt to ${state.dealt} of ${state.teams.length} teams.` : `${state.teams.length} teams, not dealt yet.`;
+  $("#cards-summary").textContent = `Loaded: ${state.cards.problem} Round 1 case${state.cards.problem === 1 ? "" : "s"} and ${state.cards.crisis} Round 2 crisis${state.cards.crisis === 1 ? "" : "es"}.`;
+  $("#dealt").textContent = state.dealt ? `Handed out to ${state.dealt} of ${state.teams.length} teams.` : `${state.teams.length} teams, not handed out yet.`;
   const count = (r) => state.teams.filter((t) => t.rounds[r]).length;
   const complete = (r) => state.teams.filter((t) => t.rounds[r]?.complete).length;
   $("#sub-summary").textContent = `Round 1: ${count(1)} saved, ${complete(1)} complete. Round 2: ${count(2)} saved, ${complete(2)} complete. ${state.teams.length} teams.`;
   $("#subs").innerHTML =
-    `<thead><tr><th>Team</th><th>Problem card</th><th>Round 1: Product</th><th>Crisis card</th><th>Round 2: Crisis</th></tr></thead><tbody>` +
+    `<thead><tr><th>Team</th><th>Round 1 case</th><th>Round 1: Product</th><th>Round 2 crisis</th><th>Round 2: Crisis</th></tr></thead><tbody>` +
     state.teams
       .map(
         (t) => `<tr><td><a href="#" data-team="${esc(t.code)}">${esc(t.code)}</a> ${esc(t.name)}</td><td class="small">${esc(t.problem ?? "–")}</td>
@@ -187,7 +187,7 @@ async function showTeam(code) {
         ? d.forms[round].fields.map((f) => `<h3>${esc(f.label)}</h3><p class="small" style="white-space:pre-wrap">${esc(s.content[f.key] || "—")}</p>`).join("")
         : "<p class='muted'>Nothing saved.</p>";
       return `<h2 style="margin-top:20px">Round ${round}: ${NAMES[round]}${s ? ` <span class="muted small">${s.words} words · saved ${fmt(s.saved_at)}</span>` : ""}</h2>
-        ${card ? `<div class="cardbox"><b>${esc(card.title)}</b>${esc(card.body)}</div>` : ""}${body}`;
+        ${card ? `<details class="cardbox"><summary><b style="display:inline">${esc(card.title)}</b></summary><div class="casebody">${esc(card.body)}</div></details>` : ""}${body}`;
     })
     .join("");
   box.innerHTML = `<div class="row"><h2 class="grow">${esc(d.team.code)} · ${esc(d.team.name)}</h2><button class="ghost" id="close-team">Close</button></div>${rounds}`;

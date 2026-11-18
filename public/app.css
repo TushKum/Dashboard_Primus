@@ -98,3 +98,4 @@ header.top h1 { white-space: nowrap; }
   header.top .who { font-size: 12px; text-align: right; }
   header.top button { padding: 6px 10px; font-size: 14px; }
 }
+.casebody { white-space: pre-wrap; }
