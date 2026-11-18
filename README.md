@@ -35,19 +35,24 @@ npm start                 # http://localhost:3000 for teams, http://localhost:30
 
 ## Deploy on Vercel
 
-1. **Import the repo:** Vercel → Add New → Project → `TushKum/Dashboard_Primus`. Vercel detects Express; keep the
+1. **Make a database:** any Postgres works. On Supabase, create a project, then take the **Transaction pooler**
+   connection string from **Connect** (port `6543`, username `postgres.<project-ref>`) and put your password in it.
+   Use a pooled string rather than a direct connection: Vercel starts many short-lived copies of the app.
+2. **Import the repo:** Vercel → Add New → Project → `TushKum/Dashboard_Primus`. Vercel detects Express; keep the
    default build settings.
-2. **Add a database:** in the project, Storage (or Marketplace) → Neon Postgres → create and connect it to the
-   project. That sets `DATABASE_URL` for every environment. Any Postgres works: paste its URL as `DATABASE_URL`.
-3. **Add the settings:** Settings → Environment Variables → `SESSION_SECRET`, `LOGIN_SECRET`, `ADMIN_PASSWORD`
-   (Production, and Preview if you use it).
+3. **Add the settings:** Settings → Environment Variables → `DATABASE_URL` (the string from step 1),
+   `SESSION_SECRET`, `LOGIN_SECRET`, `ADMIN_PASSWORD` (Production, and Preview if you use it).
 4. **Deploy** (or redeploy after adding variables). Open `https://<project>.vercel.app/admin`. The tables and the ZIPGO
    case are created on the first request. If a setting is missing, every page says which one.
 
-To reset after a rehearsal, run this in the Neon SQL editor, then reload `/admin`:
+The connection is always encrypted. It is verified where the provider's certificate chain is trusted, and otherwise
+falls back to encrypted-but-unverified with a warning in the logs (managed hosts, Supabase included, often need this).
+`?sslmode=verify-full` on the URL keeps it strict, `?sslmode=no-verify` silences the warning.
+
+To reset after a rehearsal, run this in the provider's SQL editor, then reload `/admin`:
 
 ```sql
-drop table if exists submissions, deals, crisis_cards, problem_cards, teams, settings cascade;
+truncate table submissions, deals, teams, settings, problem_cards, crisis_cards restart identity cascade;
 ```
 
 ## On the day
