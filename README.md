@@ -34,8 +34,8 @@ npm start                 # http://localhost:3000 for teams, http://localhost:30
 
 ## On the day
 
-1. **Before:** open `/admin`. Import the teams (CSV `code,name`), set the start time and durations, check the cards
-   (sample decks the ZIPGO case loads on first start), then **Hand out the case**. Download the login sheet and
+1. **Before:** open `/admin`. Import the teams (CSV `code,name`), set the start time and durations,
+   check the case is loaded (the ZIPGO case loads on first start), then **Hand out the case**. Download the login sheet and
    hand each team its code and password. Passwords come from `LOGIN_SECRET`, so the sheet can be reprinted any time.
 2. **During:** teams sign in at `/`. Each round's brief appears when the round opens. The Submissions table shows each
    team's word count, whether every field is filled in, and when it last saved.
@@ -60,7 +60,7 @@ npm run typecheck
 | Path | What |
 |---|---|
 | `src/rules.ts` | The timetable, the two forms and their word limits, dealing |
-| `src/service.ts` | What a team sees, saving a round, dealing the cards |
+| `src/service.ts` | What a team sees, saving a round, handing out the case |
 | `src/app.ts` | The JSON routes, the CSV exports and the static pages |
 | `src/db.ts` | The SQLite schema and queries |
 | `public/` | The team page (`index.html`) and the organiser console (`admin.html`) |
