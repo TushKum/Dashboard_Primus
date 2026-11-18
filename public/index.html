@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Screening Round</title>
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <header class="top">
+    <h1>Screening Round</h1>
+    <div class="row"><span class="who" id="who"></span><button class="ghost" id="logout" hidden>Sign out</button></div>
+  </header>
+  <main id="main">
+    <form class="card login" id="login">
+      <h2>Sign in</h2>
+      <p class="muted small">Use the team code and password on your login sheet.</p>
+      <label for="code">Team code</label>
+      <input id="code" autocomplete="username" autocapitalize="characters" required />
+      <label for="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password" required />
+      <p class="status bad" id="login-status"></p>
+      <button type="submit">Sign in</button>
+    </form>
+  </main>
+  <script src="/team.js" type="module"></script>
+</body>
+</html>

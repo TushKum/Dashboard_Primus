@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Screening Console</title>
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <header class="top">
+    <h1>Screening Console</h1>
+    <div class="row"><span class="who" id="clock"></span><button class="ghost" id="logout" hidden>Sign out</button></div>
+  </header>
+  <main class="wide" id="main">
+    <form class="card login" id="login">
+      <h2>Organiser sign in</h2>
+      <label for="password">Password</label>
+      <input id="password" type="password" autocomplete="current-password" required />
+      <p class="status bad" id="login-status"></p>
+      <button type="submit">Sign in</button>
+    </form>
+  </main>
+  <script src="/admin.js" type="module"></script>
+</body>
+</html>
