@@ -1,13 +1,23 @@
-// Storage: one SQLite file (Node's built-in node:sqlite), so the app runs on any small server with no database to set
-// up. Every write that matters (a save, a deal) is a single statement or a transaction.
+// Storage: Postgres. On Vercel (or any host) set DATABASE_URL (Vercel's Neon integration sets it; POSTGRES_URL works
+// too). Without one, the app runs an embedded Postgres (PGlite) in a local folder, so `npm start` needs no setup;
+// the tests use it in memory. Every query goes through `q`, so both behave the same.
 
-import { DatabaseSync } from "node:sqlite";
-import { DEFAULT_TIMETABLE, type Content, type CrisisCard, type ProblemCard, type RoundNo, type Timetable } from "./rules.ts";
+import { DEFAULT_TIMETABLE, type Content, type CrisisCard, type ProblemCard, type RoundNo, type Timetable } from "./rules.js";
+
+/** The one thing the app needs from a database: run a query, get rows back. */
+export interface Sql {
+  query<T = Record<string, unknown>>(text: string, params?: unknown[]): Promise<{ rows: T[] }>;
+  /** Runs several statements with no parameters (the schema). */
+  exec(text: string): Promise<void>;
+  /** Runs `fn` in one transaction (all or nothing). */
+  transaction<T>(fn: (tx: Pick<Sql, "query">) => Promise<T>): Promise<T>;
+  close(): Promise<void>;
+}
 
 const SCHEMA = `
 create table if not exists settings (key text primary key, value text not null);
 create table if not exists teams (
-  id integer primary key,
+  id serial primary key,
   code text not null unique,
   name text not null
 );
@@ -23,11 +33,52 @@ create table if not exists submissions (
   round integer not null check (round between 1 and 2),
   content text not null,
   words integer not null,
-  complete integer not null,
-  saved_at integer not null,
+  complete boolean not null,
+  saved_at bigint not null,
   primary key (team_id, round)
 );
 `;
+
+export async function pgSql(url: string): Promise<Sql> {
+  const { default: pg } = await import("pg");
+  // Small pool: on Vercel each function instance holds its own. Use the provider's pooled URL where offered.
+  const pool = new pg.Pool({ connectionString: url, max: 3, idleTimeoutMillis: 10_000 });
+  return {
+    query: (text, params) => pool.query(text, params as unknown[]) as never,
+    exec: async (text) => {
+      await pool.query(text);
+    },
+    async transaction(fn) {
+      const client = await pool.connect();
+      try {
+        await client.query("begin");
+        const out = await fn({ query: (text, params) => client.query(text, params as unknown[]) as never });
+        await client.query("commit");
+        return out;
+      } catch (e) {
+        await client.query("rollback").catch(() => undefined);
+        throw e;
+      } finally {
+        client.release();
+      }
+    },
+    close: () => pool.end(),
+  };
+}
+
+/** Embedded Postgres: in memory without a folder (tests), or kept in `dataDir` (local runs). */
+export async function pgliteSql(dataDir?: string): Promise<Sql> {
+  const { PGlite } = await import("@electric-sql/pglite");
+  const db = dataDir ? new PGlite(dataDir) : new PGlite();
+  return {
+    query: (text, params) => db.query(text, params) as never,
+    exec: async (text) => {
+      await db.exec(text);
+    },
+    transaction: (fn) => db.transaction((tx) => fn({ query: (text, params) => tx.query(text, params) as never })),
+    close: () => db.close(),
+  };
+}
 
 export interface TeamRow {
   id: number;
@@ -44,135 +95,130 @@ export interface SubmissionRow {
   saved_at: number;
 }
 
-export type Db = ReturnType<typeof openDb>;
+export interface DealRow {
+  team_id: number;
+  problem_number: number;
+  crisis_number: number;
+}
 
-export function openDb(path: string) {
-  const db = new DatabaseSync(path);
-  db.exec("pragma journal_mode = wal; pragma foreign_keys = on; pragma busy_timeout = 5000;");
-  db.exec(SCHEMA);
+export type Db = Awaited<ReturnType<typeof openDb>>;
 
-  const tx = <T>(fn: () => T): T => {
-    db.exec("begin immediate");
-    try {
-      const out = fn();
-      db.exec("commit");
-      return out;
-    } catch (e) {
-      db.exec("rollback");
-      throw e;
-    }
+const toSubmission = (r: Record<string, unknown>): SubmissionRow => ({
+  team_id: Number(r.team_id),
+  round: Number(r.round) as RoundNo,
+  content: JSON.parse(String(r.content)) as Content,
+  words: Number(r.words),
+  complete: r.complete === true,
+  saved_at: Number(r.saved_at),
+});
+const toTeam = (r: Record<string, unknown>): TeamRow => ({ id: Number(r.id), code: String(r.code), name: String(r.name) });
+const toDeal = (r: Record<string, unknown>): DealRow => ({
+  team_id: Number(r.team_id),
+  problem_number: Number(r.problem_number),
+  crisis_number: Number(r.crisis_number),
+});
+
+export async function openDb(sql: Sql) {
+  await sql.exec(SCHEMA);
+  const q = sql.query.bind(sql);
+
+  const getSetting = async (key: string): Promise<string | null> =>
+    ((await q<{ value: string }>("select value from settings where key = $1", [key])).rows[0]?.value ?? null);
+  const setSetting = async (key: string, value: string | null) => {
+    if (value === null) await q("delete from settings where key = $1", [key]);
+    else await q("insert into settings (key, value) values ($1, $2) on conflict (key) do update set value = excluded.value", [key, value]);
   };
-
-  const getSetting = (key: string): string | null =>
-    (db.prepare("select value from settings where key = ?").get(key) as { value: string } | undefined)?.value ?? null;
-  const setSetting = (key: string, value: string | null) => {
-    if (value === null) db.prepare("delete from settings where key = ?").run(key);
-    else db.prepare("insert into settings (key, value) values (?, ?) on conflict (key) do update set value = excluded.value").run(key, value);
-  };
-
-  const parseSubmission = (r: Record<string, unknown>): SubmissionRow => ({
-    team_id: Number(r.team_id),
-    round: Number(r.round) as RoundNo,
-    content: JSON.parse(String(r.content)) as Content,
-    words: Number(r.words),
-    complete: Number(r.complete) === 1,
-    saved_at: Number(r.saved_at),
-  });
 
   return {
-    raw: db,
-    tx,
-    close: () => db.close(),
+    close: () => sql.close(),
 
     // ── Settings ──
-    startsAt(): number | null {
-      const v = getSetting("starts_at");
+    async startsAt(): Promise<number | null> {
+      const v = await getSetting("starts_at");
       return v === null ? null : Number(v);
     },
-    setStartsAt(ms: number | null) {
-      setSetting("starts_at", ms === null ? null : String(ms));
-    },
-    timetable(): Timetable {
-      const v = getSetting("timetable");
+    setStartsAt: (ms: number | null) => setSetting("starts_at", ms === null ? null : String(ms)),
+    async timetable(): Promise<Timetable> {
+      const v = await getSetting("timetable");
       return v === null ? DEFAULT_TIMETABLE : (JSON.parse(v) as Timetable);
     },
-    setTimetable(t: Timetable) {
-      setSetting("timetable", JSON.stringify(t));
-    },
+    setTimetable: (t: Timetable) => setSetting("timetable", JSON.stringify(t)),
 
     // ── Teams ──
-    teams(): TeamRow[] {
-      return db.prepare("select * from teams order by code").all() as unknown as TeamRow[];
+    async teams(): Promise<TeamRow[]> {
+      return (await q("select * from teams order by code")).rows.map(toTeam);
     },
-    teamByCode(code: string): TeamRow | null {
-      return (db.prepare("select * from teams where code = ?").get(code) as unknown as TeamRow | undefined) ?? null;
+    async teamByCode(code: string): Promise<TeamRow | null> {
+      const r = (await q("select * from teams where code = $1", [code])).rows[0];
+      return r ? toTeam(r) : null;
     },
-    teamById(id: number): TeamRow | null {
-      return (db.prepare("select * from teams where id = ?").get(id) as unknown as TeamRow | undefined) ?? null;
+    async teamById(id: number): Promise<TeamRow | null> {
+      const r = (await q("select * from teams where id = $1", [id])).rows[0];
+      return r ? toTeam(r) : null;
     },
-    upsertTeams(rows: { code: string; name: string }[]) {
-      tx(() => {
-        const st = db.prepare("insert into teams (code, name) values (?, ?) on conflict (code) do update set name = excluded.name");
-        for (const r of rows) st.run(r.code, r.name);
-      });
-    },
+    upsertTeams: (rows: { code: string; name: string }[]) =>
+      sql.transaction(async (tx) => {
+        for (const r of rows) await tx.query("insert into teams (code, name) values ($1, $2) on conflict (code) do update set name = excluded.name", [r.code, r.name]);
+      }),
 
     // ── Cards ──
-    problemCards(): ProblemCard[] {
-      return db.prepare("select * from problem_cards order by number").all() as unknown as ProblemCard[];
+    async problemCards(): Promise<ProblemCard[]> {
+      return (await q("select * from problem_cards order by number")).rows.map((r) => ({ number: Number(r.number), title: String(r.title), body: String(r.body) }));
     },
-    crisisCards(): CrisisCard[] {
-      return db.prepare("select * from crisis_cards order by number").all() as unknown as CrisisCard[];
+    async crisisCards(): Promise<CrisisCard[]> {
+      return (await q("select * from crisis_cards order by number")).rows.map((r) => ({
+        number: Number(r.number),
+        category: String(r.category),
+        title: String(r.title),
+        body: String(r.body),
+      }));
     },
-    replaceProblemCards(cards: ProblemCard[]) {
-      tx(() => {
-        db.exec("delete from problem_cards");
-        const st = db.prepare("insert into problem_cards (number, title, body) values (?, ?, ?)");
-        for (const c of cards) st.run(c.number, c.title, c.body);
-      });
-    },
-    replaceCrisisCards(cards: CrisisCard[]) {
-      tx(() => {
-        db.exec("delete from crisis_cards");
-        const st = db.prepare("insert into crisis_cards (number, category, title, body) values (?, ?, ?, ?)");
-        for (const c of cards) st.run(c.number, c.category, c.title, c.body);
-      });
-    },
+    replaceProblemCards: (cards: ProblemCard[]) =>
+      sql.transaction(async (tx) => {
+        await tx.query("delete from problem_cards");
+        for (const c of cards) await tx.query("insert into problem_cards (number, title, body) values ($1, $2, $3)", [c.number, c.title, c.body]);
+      }),
+    replaceCrisisCards: (cards: CrisisCard[]) =>
+      sql.transaction(async (tx) => {
+        await tx.query("delete from crisis_cards");
+        for (const c of cards) await tx.query("insert into crisis_cards (number, category, title, body) values ($1, $2, $3, $4)", [c.number, c.category, c.title, c.body]);
+      }),
 
     // ── Deals ──
-    deals(): { team_id: number; problem_number: number; crisis_number: number }[] {
-      return db.prepare("select * from deals").all() as unknown as { team_id: number; problem_number: number; crisis_number: number }[];
+    async deals(): Promise<DealRow[]> {
+      return (await q("select * from deals")).rows.map(toDeal);
     },
-    dealFor(teamId: number): { problem_number: number; crisis_number: number } | null {
-      return (db.prepare("select problem_number, crisis_number from deals where team_id = ?").get(teamId) as
-        | { problem_number: number; crisis_number: number }
-        | undefined) ?? null;
+    async dealFor(teamId: number): Promise<DealRow | null> {
+      const r = (await q("select * from deals where team_id = $1", [teamId])).rows[0];
+      return r ? toDeal(r) : null;
     },
-    replaceDeals(rows: { teamId: number; problem: number; crisis: number }[]) {
-      tx(() => {
-        db.exec("delete from deals");
-        const st = db.prepare("insert into deals (team_id, problem_number, crisis_number) values (?, ?, ?)");
-        for (const r of rows) st.run(r.teamId, r.problem, r.crisis);
-      });
-    },
+    replaceDeals: (rows: { teamId: number; problem: number; crisis: number }[]) =>
+      sql.transaction(async (tx) => {
+        await tx.query("delete from deals");
+        for (const r of rows) await tx.query("insert into deals (team_id, problem_number, crisis_number) values ($1, $2, $3)", [r.teamId, r.problem, r.crisis]);
+      }),
 
     // ── Submissions ──
-    submission(teamId: number, round: RoundNo): SubmissionRow | null {
-      const r = db.prepare("select * from submissions where team_id = ? and round = ?").get(teamId, round) as Record<string, unknown> | undefined;
-      return r ? parseSubmission(r) : null;
+    async submission(teamId: number, round: RoundNo): Promise<SubmissionRow | null> {
+      const r = (await q("select * from submissions where team_id = $1 and round = $2", [teamId, round])).rows[0];
+      return r ? toSubmission(r) : null;
     },
-    submissions(round?: RoundNo): SubmissionRow[] {
-      const rows = (round === undefined
-        ? db.prepare("select * from submissions").all()
-        : db.prepare("select * from submissions where round = ?").all(round)) as Record<string, unknown>[];
-      return rows.map(parseSubmission);
+    async submissions(): Promise<SubmissionRow[]> {
+      return (await q("select * from submissions")).rows.map(toSubmission);
     },
-    saveSubmission(teamId: number, round: RoundNo, content: Content, words: number, complete: boolean, at: number) {
-      db.prepare(
-        `insert into submissions (team_id, round, content, words, complete, saved_at) values (?, ?, ?, ?, ?, ?)
+    async saveSubmission(teamId: number, round: RoundNo, content: Content, words: number, complete: boolean, at: number) {
+      await q(
+        `insert into submissions (team_id, round, content, words, complete, saved_at) values ($1, $2, $3, $4, $5, $6)
          on conflict (team_id, round) do update set content = excluded.content, words = excluded.words,
            complete = excluded.complete, saved_at = excluded.saved_at`,
-      ).run(teamId, round, JSON.stringify(content), words, complete ? 1 : 0, at);
+        [teamId, round, JSON.stringify(content), words, complete, at],
+      );
     },
   };
+}
+
+/** The database from the environment: DATABASE_URL or POSTGRES_URL, else embedded Postgres in `localDir`. */
+export async function dbFromEnv(env: NodeJS.ProcessEnv, localDir: string): Promise<Db> {
+  const url = env.DATABASE_URL?.trim() || env.POSTGRES_URL?.trim();
+  return openDb(url ? await pgSql(url) : await pgliteSql(localDir));
 }

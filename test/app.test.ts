@@ -3,18 +3,23 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import { createApp, loadDefaultCards } from "../src/app.ts";
-import { teamPassword } from "../src/auth.ts";
-import { parseCsv } from "../src/csv.ts";
-import { openDb } from "../src/db.ts";
+import { createApp } from "../src/routes.js";
+import { teamPassword } from "../src/auth.js";
+import { parseCsv } from "../src/csv.js";
+import { openDb, pgSql, pgliteSql } from "../src/db.js";
 
 const START = Date.parse("2026-11-19T10:00:00Z");
 const MIN = 60_000;
 let clock = START - 60 * MIN;
-const db = openDb(":memory:");
-loadDefaultCards(db);
-const { app } = createApp({
-  db,
+const app = createApp({
+  // TEST_DATABASE_URL runs the same session through the pg driver against a real (throwaway) Postgres.
+  openDb: async () => {
+    const url = process.env.TEST_DATABASE_URL;
+    if (!url) return openDb(await pgliteSql());
+    const sql = await pgSql(url);
+    await sql.exec("drop table if exists submissions, deals, crisis_cards, problem_cards, teams, settings cascade");
+    return openDb(sql);
+  },
   sessionSecret: "test-session",
   loginSecret: "test-login",
   adminPassword: "organiser",

@@ -5,8 +5,9 @@ and writes a product idea (up to **800 words**), then gets a crisis card and wri
 **400 words**). Organisers watch submissions come in, read any team's work, and download everything as one CSV to mark.
 There is no automatic judging.
 
-It is a small, standalone app: Node 22, TypeScript, Express, and one SQLite file (Node's built-in `node:sqlite`).
-There is no database server to set up and no build step.
+It is a small Express app in TypeScript with a Postgres database. It deploys to Vercel as one function, with the pages
+served by Vercel's CDN. Locally it needs no database server: without `DATABASE_URL` it keeps its data in an embedded
+Postgres (PGlite) under `data/pglite`.
 
 ## The two rounds
 
@@ -22,14 +23,31 @@ A briefing (default 15 minutes) comes first; all three durations can be changed 
 every text field of the round together (names and ₹ amounts are not counted). The form saves as teams type and locks
 on the server's clock when the round ends: whatever is saved then is what gets handed in.
 
-## Run it
+## Run it locally
 
-You need Node 22.5 or newer (`node -v`).
+You need Node 22 or newer (`node -v`).
 
 ```bash
 npm install
 cp .env.example .env      # set SESSION_SECRET, LOGIN_SECRET and ADMIN_PASSWORD
 npm start                 # http://localhost:3000 for teams, http://localhost:3000/admin for organisers
+```
+
+## Deploy on Vercel
+
+1. **Import the repo:** Vercel → Add New → Project → `TushKum/Dashboard_Primus`. Vercel detects Express; keep the
+   default build settings.
+2. **Add a database:** in the project, Storage (or Marketplace) → Neon Postgres → create and connect it to the
+   project. That sets `DATABASE_URL` for every environment. Any Postgres works: paste its URL as `DATABASE_URL`.
+3. **Add the settings:** Settings → Environment Variables → `SESSION_SECRET`, `LOGIN_SECRET`, `ADMIN_PASSWORD`
+   (Production, and Preview if you use it).
+4. **Deploy** (or redeploy after adding variables). Open `https://<project>.vercel.app/admin`. The tables and the ZIPGO
+   case are created on the first request. If a setting is missing, every page says which one.
+
+To reset after a rehearsal, run this in the Neon SQL editor, then reload `/admin`:
+
+```sql
+drop table if exists submissions, deals, crisis_cards, problem_cards, teams, settings cascade;
 ```
 
 ## On the day
@@ -53,20 +71,18 @@ These load into a new database on first start. To use a different case, upload n
 ## Develop
 
 ```bash
-npm test          # word limits, timetable, dealing, and a full session through the web routes
+npm test          # word limits, timetable, handing out, and a full session through the routes (embedded Postgres)
 npm run typecheck
+TEST_DATABASE_URL=postgres://… npm test   # the same session through the pg driver on a throwaway Postgres
 ```
 
 | Path | What |
 |---|---|
-| `src/rules.ts` | The timetable, the two forms and their word limits, dealing |
+| `src/index.ts` | The app from the environment: Vercel's entry point (its default export) |
+| `src/local.ts` | `npm start`: the same app on a local port |
+| `src/routes.ts` | The JSON routes and the CSV exports |
 | `src/service.ts` | What a team sees, saving a round, handing out the case |
-| `src/app.ts` | The JSON routes, the CSV exports and the static pages |
-| `src/db.ts` | The SQLite schema and queries |
+| `src/rules.ts` | The timetable, the two forms and their word limits |
+| `src/db.ts` | The Postgres schema and queries (pg on Vercel, PGlite locally and in tests) |
+| `src/case.ts` | The ZIPGO case a new database starts with |
 | `public/` | The team page (`index.html`) and the organiser console (`admin.html`) |
-
-## Deploy
-
-Any host that runs Node 22 with a persistent disk works (a small VM, Render, Railway, Fly.io). Keep `DATABASE_PATH`
-on the persistent disk, serve over HTTPS and set `SECURE_COOKIES=1`. Vercel's serverless functions do not keep files
-between requests, so they are not a fit for this app as built.

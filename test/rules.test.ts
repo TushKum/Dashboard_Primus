@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkForm, dealEvenly, parseRupees, roundIsOpen, roundWindows, shuffle, stageAt, FORMS } from "../src/rules.ts";
+import { checkForm, dealEvenly, parseRupees, roundIsOpen, roundWindows, shuffle, stageAt, FORMS } from "../src/rules.js";
 
 const words = (n: number) => Array(n).fill("word").join(" ");
 
