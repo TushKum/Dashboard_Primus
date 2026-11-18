@@ -1,21 +1,18 @@
 // Storage: one SQLite file (Node's built-in node:sqlite), so the app runs on any small server with no database to set
-// up. Every write that matters (a save, a judgement) is a single statement or a transaction.
+// up. Every write that matters (a save, a deal) is a single statement or a transaction.
 
 import { DatabaseSync } from "node:sqlite";
-import type { Content, CrisisCard, PriceCard, ProblemCard, RoundNo } from "./rules.ts";
+import { DEFAULT_TIMETABLE, type Content, type CrisisCard, type ProblemCard, type RoundNo, type Timetable } from "./rules.ts";
 
 const SCHEMA = `
 create table if not exists settings (key text primary key, value text not null);
 create table if not exists teams (
   id integer primary key,
   code text not null unique,
-  name text not null,
-  disqualified integer not null default 0,
-  penalty real not null default 0
+  name text not null
 );
 create table if not exists problem_cards (number integer primary key, title text not null, body text not null);
 create table if not exists crisis_cards (number integer primary key, category text not null, title text not null, body text not null);
-create table if not exists price_cards (key text primary key, data text not null);
 create table if not exists deals (
   team_id integer primary key references teams (id) on delete cascade,
   problem_number integer not null,
@@ -23,24 +20,11 @@ create table if not exists deals (
 );
 create table if not exists submissions (
   team_id integer not null references teams (id) on delete cascade,
-  round integer not null check (round between 1 and 3),
+  round integer not null check (round between 1 and 2),
   content text not null,
   words integer not null,
   complete integer not null,
   saved_at integer not null,
-  primary key (team_id, round)
-);
-create table if not exists judgements (
-  team_id integer not null references teams (id) on delete cascade,
-  round integer not null check (round between 1 and 3),
-  runs text not null,
-  score real,
-  breakdown text,
-  rationale text,
-  model text,
-  removed_lines text not null default '[]',
-  error text,
-  judged_at integer not null,
   primary key (team_id, round)
 );
 `;
@@ -49,8 +33,6 @@ export interface TeamRow {
   id: number;
   code: string;
   name: string;
-  disqualified: number;
-  penalty: number;
 }
 
 export interface SubmissionRow {
@@ -60,26 +42,6 @@ export interface SubmissionRow {
   words: number;
   complete: boolean;
   saved_at: number;
-}
-
-export interface JudgementRun {
-  total: number;
-  breakdown: Record<string, number>;
-  rationale: string;
-  model: string;
-}
-
-export interface JudgementRow {
-  team_id: number;
-  round: RoundNo;
-  runs: JudgementRun[];
-  score: number | null;
-  breakdown: Record<string, number> | null;
-  rationale: string | null;
-  model: string | null;
-  removed_lines: string[];
-  error: string | null;
-  judged_at: number;
 }
 
 export type Db = ReturnType<typeof openDb>;
@@ -116,18 +78,6 @@ export function openDb(path: string) {
     complete: Number(r.complete) === 1,
     saved_at: Number(r.saved_at),
   });
-  const parseJudgement = (r: Record<string, unknown>): JudgementRow => ({
-    team_id: Number(r.team_id),
-    round: Number(r.round) as RoundNo,
-    runs: JSON.parse(String(r.runs)) as JudgementRun[],
-    score: r.score === null ? null : Number(r.score),
-    breakdown: r.breakdown === null ? null : (JSON.parse(String(r.breakdown)) as Record<string, number>),
-    rationale: (r.rationale as string | null) ?? null,
-    model: (r.model as string | null) ?? null,
-    removed_lines: JSON.parse(String(r.removed_lines)) as string[],
-    error: (r.error as string | null) ?? null,
-    judged_at: Number(r.judged_at),
-  });
 
   return {
     raw: db,
@@ -142,17 +92,12 @@ export function openDb(path: string) {
     setStartsAt(ms: number | null) {
       setSetting("starts_at", ms === null ? null : String(ms));
     },
-    qualifyCount(): number {
-      return Number(getSetting("qualify_count") ?? 150);
+    timetable(): Timetable {
+      const v = getSetting("timetable");
+      return v === null ? DEFAULT_TIMETABLE : (JSON.parse(v) as Timetable);
     },
-    setQualifyCount(n: number) {
-      setSetting("qualify_count", String(n));
-    },
-    published(): boolean {
-      return getSetting("published") === "1";
-    },
-    setPublished(on: boolean) {
-      setSetting("published", on ? "1" : "0");
+    setTimetable(t: Timetable) {
+      setSetting("timetable", JSON.stringify(t));
     },
 
     // ── Teams ──
@@ -171,10 +116,6 @@ export function openDb(path: string) {
         for (const r of rows) st.run(r.code, r.name);
       });
     },
-    updateTeam(id: number, patch: { disqualified?: boolean; penalty?: number }) {
-      if (patch.disqualified !== undefined) db.prepare("update teams set disqualified = ? where id = ?").run(patch.disqualified ? 1 : 0, id);
-      if (patch.penalty !== undefined) db.prepare("update teams set penalty = ? where id = ?").run(patch.penalty, id);
-    },
 
     // ── Cards ──
     problemCards(): ProblemCard[] {
@@ -182,9 +123,6 @@ export function openDb(path: string) {
     },
     crisisCards(): CrisisCard[] {
       return db.prepare("select * from crisis_cards order by number").all() as unknown as CrisisCard[];
-    },
-    priceCards(): PriceCard[] {
-      return (db.prepare("select data from price_cards order by key").all() as { data: string }[]).map((r) => JSON.parse(r.data) as PriceCard);
     },
     replaceProblemCards(cards: ProblemCard[]) {
       tx(() => {
@@ -198,13 +136,6 @@ export function openDb(path: string) {
         db.exec("delete from crisis_cards");
         const st = db.prepare("insert into crisis_cards (number, category, title, body) values (?, ?, ?, ?)");
         for (const c of cards) st.run(c.number, c.category, c.title, c.body);
-      });
-    },
-    replacePriceCards(cards: PriceCard[]) {
-      tx(() => {
-        db.exec("delete from price_cards");
-        const st = db.prepare("insert into price_cards (key, data) values (?, ?)");
-        for (const c of cards) st.run(c.key, JSON.stringify(c));
       });
     },
 
@@ -242,41 +173,6 @@ export function openDb(path: string) {
          on conflict (team_id, round) do update set content = excluded.content, words = excluded.words,
            complete = excluded.complete, saved_at = excluded.saved_at`,
       ).run(teamId, round, JSON.stringify(content), words, complete ? 1 : 0, at);
-    },
-
-    // ── Judgements ──
-    judgement(teamId: number, round: RoundNo): JudgementRow | null {
-      const r = db.prepare("select * from judgements where team_id = ? and round = ?").get(teamId, round) as Record<string, unknown> | undefined;
-      return r ? parseJudgement(r) : null;
-    },
-    judgements(round?: RoundNo): JudgementRow[] {
-      const rows = (round === undefined
-        ? db.prepare("select * from judgements").all()
-        : db.prepare("select * from judgements where round = ?").all(round)) as Record<string, unknown>[];
-      return rows.map(parseJudgement);
-    },
-    saveJudgement(j: Omit<JudgementRow, "judged_at">, at: number) {
-      db.prepare(
-        `insert into judgements (team_id, round, runs, score, breakdown, rationale, model, removed_lines, error, judged_at)
-         values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         on conflict (team_id, round) do update set runs = excluded.runs, score = excluded.score, breakdown = excluded.breakdown,
-           rationale = excluded.rationale, model = excluded.model, removed_lines = excluded.removed_lines, error = excluded.error,
-           judged_at = excluded.judged_at`,
-      ).run(
-        j.team_id,
-        j.round,
-        JSON.stringify(j.runs),
-        j.score,
-        j.breakdown === null ? null : JSON.stringify(j.breakdown),
-        j.rationale,
-        j.model,
-        JSON.stringify(j.removed_lines),
-        j.error,
-        at,
-      );
-    },
-    clearJudgements(round: RoundNo) {
-      db.prepare("delete from judgements where round = ?").run(round);
     },
   };
 }

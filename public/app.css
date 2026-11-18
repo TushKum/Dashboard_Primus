@@ -69,7 +69,7 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .pill.warn { color: var(--warn); }
 .pill.bad { color: var(--bad); }
 .clock { font-variant-numeric: tabular-nums; font-size: 28px; font-weight: 700; }
-.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 16px; }
+.steps { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-bottom: 16px; }
 .step { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--panel); font-size: 14px; }
 .step.now { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 .step b { display: block; }

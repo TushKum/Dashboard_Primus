@@ -1,14 +1,12 @@
-// The organiser console: set the start time, import teams, load and deal the cards, judge each round, check a team,
-// publish the results and download the list of qualifying teams.
+// The organiser console: set the timetable, import teams, load and deal the cards, watch submissions come in, read
+// any team's work and download everything as one CSV.
 
 const $ = (s) => document.querySelector(s);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-const NAMES = { 1: "Idea", 2: "Crisis", 3: "Pricing" };
+const NAMES = { 1: "Product", 2: "Crisis" };
 const fmt = (ms) => new Date(ms).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
-const localInput = (ms) => {
-  const d = new Date(ms - new Date(ms).getTimezoneOffset() * 60000);
-  return d.toISOString().slice(0, 16);
-};
+const hm = (ms) => new Date(ms).toLocaleTimeString([], { timeStyle: "short" });
+const localInput = (ms) => new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().slice(0, 16);
 
 let state = null;
 let built = false;
@@ -65,13 +63,16 @@ async function load() {
 
 function build() {
   built = true;
+  const t = state.timetable;
   $("#main").innerHTML = `
   <section class="card">
     <h2>1. Session</h2>
-    <p class="small muted">Briefing 15 minutes, then three rounds of 40 minutes each (2 h 15 min in all). Forms lock on the server's clock.</p>
+    <p class="small muted">A briefing, then Round 1 (product, up to ${state.limits[1]} words) and Round 2 (crisis, up to ${state.limits[2]} words). Forms lock on the server's clock.</p>
     <div class="row">
       <div class="grow"><label for="starts">Start time (your local time)</label><input id="starts" type="datetime-local" /></div>
-      <div><label for="qualify">Teams that qualify</label><input id="qualify" type="number" min="1" style="width:120px" /></div>
+      <div><label for="m0">Briefing (min)</label><input id="m0" type="number" min="0" style="width:110px" value="${t.briefingMinutes}" /></div>
+      <div><label for="m1">Round 1 (min)</label><input id="m1" type="number" min="1" style="width:110px" value="${t.roundMinutes[1]}" /></div>
+      <div><label for="m2">Round 2 (min)</label><input id="m2" type="number" min="1" style="width:110px" value="${t.roundMinutes[2]}" /></div>
     </div>
     <div class="row" style="margin-top:10px"><button id="save-settings">Save</button><button class="ghost" id="clear-start">Clear start time</button></div>
     <p class="status" id="s-settings"></p>
@@ -95,8 +96,8 @@ function build() {
     <p class="small" id="cards-summary"></p>
     <div class="row">
       <div class="grow"><label for="card-kind">Replace</label>
-        <select id="card-kind"><option value="problem">Problem cards (CSV: number,title,body)</option><option value="crisis">Crisis cards (CSV: number,category,title,body)</option><option value="price">Price cards (JSON)</option></select></div>
-      <div><label for="card-file">File</label><input type="file" id="card-file" style="width:auto" /></div>
+        <select id="card-kind"><option value="problem">Problem cards (CSV: number,title,body)</option><option value="crisis">Crisis cards (CSV: number,category,title,body)</option></select></div>
+      <div><label for="card-file">File</label><input type="file" id="card-file" accept=".csv,text/csv" style="width:auto" /></div>
     </div>
     <div class="row" style="margin-top:10px"><button id="upload-cards">Upload</button></div>
     <p class="status" id="s-cards"></p>
@@ -107,84 +108,64 @@ function build() {
   </section>
 
   <section class="card">
-    <h2>4. Judging</h2>
-    <p class="small muted">Judge a round once it has closed. Each submission is read 3 times (5 if the runs disagree) without team names; the median counts. Failed ones can be judged again.</p>
-    <div class="table-wrap"><table id="rounds"></table></div>
-    <p class="status" id="s-judge"></p>
-  </section>
-
-  <section class="card">
-    <h2>5. Results</h2>
-    <div class="row">
-      <label class="row" style="margin:0;font-weight:500"><input type="checkbox" id="published" style="width:auto" /> Show results to teams</label>
-      <span class="grow"></span>
-      <a href="/api/admin/results.csv"><button class="ghost" type="button">Results CSV</button></a>
-      <a href="/api/admin/qualified.csv"><button type="button">Qualified teams CSV</button></a>
-    </div>
-    <p class="status" id="s-results"></p>
-    <div class="table-wrap"><table id="results"></table></div>
+    <div class="row"><h2 class="grow">4. Submissions</h2><a href="/api/admin/submissions.csv"><button type="button">Download all (CSV)</button></a></div>
+    <p class="small" id="sub-summary"></p>
+    <div class="table-wrap"><table id="subs"></table></div>
   </section>
 
   <section class="card" id="team-detail" hidden></section>`;
 
   $("#save-settings").onclick = () =>
-    act("s-settings", () => api("/api/admin/settings", { method: "POST", body: JSON.stringify({ startsAt: $("#starts").value ? new Date($("#starts").value).toISOString() : null, qualifyCount: Number($("#qualify").value) }) }), "Saved.");
+    act(
+      "s-settings",
+      () =>
+        api("/api/admin/settings", {
+          method: "POST",
+          body: JSON.stringify({
+            startsAt: $("#starts").value ? new Date($("#starts").value).toISOString() : null,
+            briefingMinutes: Number($("#m0").value),
+            round1Minutes: Number($("#m1").value),
+            round2Minutes: Number($("#m2").value),
+          }),
+        }),
+      "Saved.",
+    );
   $("#clear-start").onclick = () => act("s-settings", () => api("/api/admin/settings", { method: "POST", body: JSON.stringify({ startsAt: null }) }), "Start time cleared.");
   $("#teams-file").onchange = async (ev) => ($("#teams-csv").value = await ev.target.files[0].text());
   $("#import-teams").onclick = () => act("s-teams", () => api("/api/admin/teams", { method: "POST", csv: true, body: $("#teams-csv").value }), (r) => `${r.teams} teams in all.`);
   $("#upload-cards").onclick = async () => {
     const f = $("#card-file").files[0];
     if (!f) return say("s-cards", "Choose a file first.", false);
-    const kind = $("#card-kind").value;
-    act("s-cards", async () => api(`/api/admin/cards/${kind}`, { method: "POST", csv: true, body: await f.text() }), "Cards replaced.");
+    act("s-cards", async () => api(`/api/admin/cards/${$("#card-kind").value}`, { method: "POST", csv: true, body: await f.text() }), "Cards replaced.");
   };
   $("#deal").onclick = () => {
     if (state.dealt && !confirm("Cards are already dealt. Deal again? Every team gets new cards.")) return;
     act("s-deal", () => api("/api/admin/deal", { method: "POST", body: "{}" }), (r) => `Dealt to ${r.teams} teams.`);
   };
-  $("#published").onchange = (ev) => act("s-results", () => api("/api/admin/publish", { method: "POST", body: JSON.stringify({ published: ev.target.checked }) }), ev.target.checked ? "Teams can now see their results." : "Results hidden from teams.");
   $("#starts").value = state.startsAt ? localInput(state.startsAt) : "";
-  $("#qualify").value = state.qualifyCount;
+}
+
+function cell(r, limit) {
+  if (!r) return '<span class="muted">–</span>';
+  return `${r.words}/${limit} ${r.complete ? '<span class="pill">Complete</span>' : '<span class="pill warn">Partial</span>'} <span class="muted small">${hm(r.savedAt)}</span>`;
 }
 
 function refresh() {
   $("#clock").textContent = new Date(state.now).toLocaleTimeString();
-  const w = state.startsAt
-    ? [0, 1, 2].map((i) => {
-        const open = state.startsAt + (15 + i * 40) * 60000;
-        return `Round ${i + 1} (${NAMES[i + 1]}): ${fmt(open)} → ${new Date(open + 40 * 60000).toLocaleTimeString([], { timeStyle: "short" })}`;
-      })
-    : ["No start time set."];
-  $("#timeline").innerHTML = w.map(esc).join("<br>");
-  $("#cards-summary").textContent = `${state.cards.problem} problem cards, ${state.cards.crisis} crisis cards, ${state.cards.price.length} price cards (${state.cards.price.join("; ")}).`;
-  $("#dealt").textContent = state.dealt ? `Dealt to ${state.dealt} of ${state.teams} teams.` : `${state.teams} teams, not dealt yet.`;
-  $("#published").checked = state.published;
-
-  $("#rounds").innerHTML =
-    `<thead><tr><th>Round</th><th class="num">Saved</th><th class="num">Complete</th><th class="num">Judged</th><th class="num">Failed</th><th class="num">Flagged</th><th></th></tr></thead><tbody>` +
-    state.rounds
-      .map((r) => {
-        const p = r.progress;
-        const running = p?.running ? `<span class="pill">Judging ${p.done + p.failed}/${p.total}</span>` : "";
-        return `<tr><td>${r.round}. ${NAMES[r.round]} <span class="muted">(out of ${r.max})</span></td><td class="num">${r.saved}</td><td class="num">${r.complete}</td><td class="num">${r.judged}</td>
-        <td class="num">${r.failed}</td><td class="num">${r.flagged}</td>
-        <td>${running || `<button data-judge="${r.round}">Judge</button> <button class="ghost" data-rejudge="${r.round}">Re-judge all</button>`}</td></tr>`;
-      })
-      .join("") +
-    "</tbody>";
-  for (const b of document.querySelectorAll("[data-judge]")) b.onclick = () => act("s-judge", () => api(`/api/admin/judge/${b.dataset.judge}`, { method: "POST", body: "{}" }), "Judging started.");
-  for (const b of document.querySelectorAll("[data-rejudge]"))
-    b.onclick = () => confirm(`Judge every Round ${b.dataset.rejudge} submission again? Existing scores are replaced.`) && act("s-judge", () => api(`/api/admin/judge/${b.dataset.rejudge}`, { method: "POST", body: JSON.stringify({ rejudge: true }) }), "Re-judging started.");
-  const errs = state.rounds.flatMap((r) => r.progress?.errors ?? []);
-  if (errs.length) say("s-judge", `Errors: ${errs.join(" | ")}`, false);
-
-  $("#results").innerHTML =
-    `<thead><tr><th class="num">Rank</th><th>Team</th><th class="num">Idea</th><th class="num">Crisis</th><th class="num">Price: judge</th><th class="num">Price: market</th><th class="num">Penalty</th><th class="num">Total</th><th></th></tr></thead><tbody>` +
-    state.results
+  $("#timeline").innerHTML = state.windows.length
+    ? state.windows.map((w) => esc(`Round ${w.round} (${NAMES[w.round]}): ${fmt(w.opensAt)} → ${hm(w.closesAt)}`)).join("<br>")
+    : "No start time set.";
+  $("#cards-summary").textContent = `${state.cards.problem} problem cards and ${state.cards.crisis} crisis cards loaded.`;
+  $("#dealt").textContent = state.dealt ? `Dealt to ${state.dealt} of ${state.teams.length} teams.` : `${state.teams.length} teams, not dealt yet.`;
+  const count = (r) => state.teams.filter((t) => t.rounds[r]).length;
+  const complete = (r) => state.teams.filter((t) => t.rounds[r]?.complete).length;
+  $("#sub-summary").textContent = `Round 1: ${count(1)} saved, ${complete(1)} complete. Round 2: ${count(2)} saved, ${complete(2)} complete. ${state.teams.length} teams.`;
+  $("#subs").innerHTML =
+    `<thead><tr><th>Team</th><th>Problem card</th><th>Round 1: Product</th><th>Crisis card</th><th>Round 2: Crisis</th></tr></thead><tbody>` +
+    state.teams
       .map(
-        (r) => `<tr><td class="num">${r.rank ?? "–"}</td><td><a href="#" data-team="${esc(r.code)}">${esc(r.code)}</a> ${esc(r.name)}</td>
-        <td class="num">${r.r1}</td><td class="num">${r.r2}</td><td class="num">${r.r3Judge}</td><td class="num">${r.r3Market}</td><td class="num">${r.penalty || ""}</td><td class="num"><b>${r.total}</b></td>
-        <td>${r.disqualified ? '<span class="pill bad">DQ</span>' : r.qualified ? '<span class="pill">Qualifies</span>' : ""}</td></tr>`,
+        (t) => `<tr><td><a href="#" data-team="${esc(t.code)}">${esc(t.code)}</a> ${esc(t.name)}</td><td class="small">${esc(t.problem ?? "–")}</td>
+        <td>${cell(t.rounds[1], state.limits[1])}</td><td class="small">${esc(t.crisis ?? "–")}</td><td>${cell(t.rounds[2], state.limits[2])}</td></tr>`,
       )
       .join("") +
     "</tbody>";
@@ -200,28 +181,17 @@ async function showTeam(code) {
   const box = $("#team-detail");
   box.hidden = false;
   const rounds = d.rounds
-    .map((r) => {
-      const s = r.submission;
-      const j = r.judgement;
-      const fields = s ? Object.entries(s.content).filter(([, v]) => v).map(([k, v]) => `<b>${esc(k)}</b>: ${esc(v)}`).join("<br>") : "<span class='muted'>Nothing saved.</span>";
-      const verdict = j
-        ? j.error
-          ? `<p class="status bad">Judge error: ${esc(j.error)}</p>`
-          : `<p><b>Score ${j.score}</b> (runs ${j.runs.map((x) => x.total).join(", ")}; ${esc(j.model)})<br>${esc(j.rationale)}</p>`
-        : "";
-      const flagged = j?.removed_lines?.length ? `<p class="status bad">Lines removed before judging: ${j.removed_lines.map(esc).join(" / ")}</p>` : "";
-      return `<h3>Round ${r.round}: ${NAMES[r.round]}${s ? ` · ${s.words} words` : ""}</h3><div class="small">${fields}</div>${verdict}${flagged}`;
+    .map(({ round, submission: s }) => {
+      const card = round === 1 ? d.problem : d.crisis;
+      const body = s
+        ? d.forms[round].fields.map((f) => `<h3>${esc(f.label)}</h3><p class="small" style="white-space:pre-wrap">${esc(s.content[f.key] || "—")}</p>`).join("")
+        : "<p class='muted'>Nothing saved.</p>";
+      return `<h2 style="margin-top:20px">Round ${round}: ${NAMES[round]}${s ? ` <span class="muted small">${s.words} words · saved ${fmt(s.saved_at)}</span>` : ""}</h2>
+        ${card ? `<div class="cardbox"><b>${esc(card.title)}</b>${esc(card.body)}</div>` : ""}${body}`;
     })
     .join("");
-  const p = d.pricing;
-  box.innerHTML = `<div class="row"><h2 class="grow">${esc(d.team.code)} · ${esc(d.team.name)}</h2><button class="ghost" id="close-team">Close</button></div>
-    <p class="small">Problem: ${esc(d.problem?.title ?? "not dealt")} · Crisis: ${esc(d.crisis?.title ?? "not dealt")}${p ? ` · Price card: ${esc(p.card.label)}, cost used ₹${(p.cost / 100).toFixed(2)}${p.profit !== null ? `, monthly profit ₹${(p.profit / 100).toLocaleString("en-IN")}` : ""}` : ""}</p>
-    <div class="row"><label style="margin:0" for="penalty">Penalty points</label><input id="penalty" type="number" min="0" step="1" value="${d.team.penalty}" style="width:100px" />
-    <label class="row" style="margin:0;font-weight:500"><input type="checkbox" id="dq" style="width:auto" ${d.team.disqualified ? "checked" : ""}/> Disqualified</label>
-    <button id="save-team">Save</button></div><p class="status" id="s-team"></p>${rounds}`;
+  box.innerHTML = `<div class="row"><h2 class="grow">${esc(d.team.code)} · ${esc(d.team.name)}</h2><button class="ghost" id="close-team">Close</button></div>${rounds}`;
   $("#close-team").onclick = () => (box.hidden = true);
-  $("#save-team").onclick = () =>
-    act("s-team", () => api(`/api/admin/team/${encodeURIComponent(code)}`, { method: "POST", body: JSON.stringify({ penalty: Number($("#penalty").value), disqualified: $("#dq").checked }) }), "Saved.");
   box.scrollIntoView({ behavior: "smooth" });
 }
 

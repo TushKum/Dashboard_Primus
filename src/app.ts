@@ -6,19 +6,16 @@ import { fileURLToPath } from "node:url";
 import { cookieValue, makeSession, readSession, safeEqual, teamPassword, type Session } from "./auth.ts";
 import { parseCsv, toCsv } from "./csv.ts";
 import type { Db } from "./db.ts";
-import type { JudgeFn } from "./judge.ts";
-import { ROUNDS, rubricMax, validatePriceCard, type CrisisCard, type PriceCard, type ProblemCard, type RoundNo } from "./rules.ts";
+import { FORMS, ROUNDS, roundWindows, type CrisisCard, type ProblemCard, type RoundNo } from "./rules.ts";
 import { ActionError, createService } from "./service.ts";
 
 export interface AppConfig {
   db: Db;
-  judge: JudgeFn;
   sessionSecret: string;
   loginSecret: string;
   adminPassword: string;
   now?: () => number;
   secureCookies?: boolean;
-  concurrency?: number;
   random?: () => number;
 }
 
@@ -28,47 +25,36 @@ const dataFile = (name: string) => fileURLToPath(new URL(`../data/${name}`, impo
 export function loadDefaultCards(db: Db) {
   if (!db.problemCards().length) db.replaceProblemCards(problemCardsFromCsv(readFileSync(dataFile("problem-cards.csv"), "utf8")));
   if (!db.crisisCards().length) db.replaceCrisisCards(crisisCardsFromCsv(readFileSync(dataFile("crisis-cards.csv"), "utf8")));
-  if (!db.priceCards().length) db.replacePriceCards(priceCardsFromJson(readFileSync(dataFile("price-cards.json"), "utf8")));
 }
 
 function problemCardsFromCsv(text: string): ProblemCard[] {
-  const rows = parseCsv(text);
-  const cards = rows.map((r, i) => ({ number: Number(r.number || i + 1), title: r.title ?? "", body: r.body ?? "" }));
+  const cards = parseCsv(text).map((r, i) => ({ number: Number(r.number || i + 1), title: r.title ?? "", body: r.body ?? "" }));
   if (!cards.length || cards.some((c) => !Number.isInteger(c.number) || !c.title || !c.body)) throw new ActionError("Problem cards need columns number, title, body, all filled in.");
   return cards;
 }
 
 function crisisCardsFromCsv(text: string): CrisisCard[] {
-  const rows = parseCsv(text);
-  const cards = rows.map((r, i) => ({ number: Number(r.number || i + 1), category: r.category ?? "", title: r.title ?? "", body: r.body ?? "" }));
+  const cards = parseCsv(text).map((r, i) => ({ number: Number(r.number || i + 1), category: r.category ?? "", title: r.title ?? "", body: r.body ?? "" }));
   if (!cards.length || cards.some((c) => !Number.isInteger(c.number) || !c.category || !c.title || !c.body)) throw new ActionError("Crisis cards need columns number, category, title, body, all filled in.");
-  return cards;
-}
-
-function priceCardsFromJson(text: string): PriceCard[] {
-  let cards: PriceCard[];
-  try {
-    cards = JSON.parse(text) as PriceCard[];
-  } catch {
-    throw new ActionError("Price cards must be a JSON array.");
-  }
-  if (!Array.isArray(cards) || !cards.length) throw new ActionError("Price cards must be a non-empty JSON array.");
-  const errors = cards.flatMap((c, i) => validatePriceCard(c).map((e) => `card ${i + 1}: ${e}`));
-  if (new Set(cards.map((c) => c.key)).size !== cards.length) errors.push("card keys must be unique");
-  if (errors.length) throw new ActionError(errors.join("; "));
   return cards;
 }
 
 const asRound = (v: unknown): RoundNo => {
   const n = Number(v);
-  if (n !== 1 && n !== 2 && n !== 3) throw new ActionError("No such round.", 404);
+  if (n !== 1 && n !== 2) throw new ActionError("No such round.", 404);
+  return n;
+};
+
+const minutes = (v: unknown, name: string, min: number) => {
+  const n = Number(v);
+  if (!Number.isInteger(n) || n < min || n > 600) throw new ActionError(`${name} must be a whole number of minutes from ${min} to 600.`);
   return n;
 };
 
 export function createApp(cfg: AppConfig) {
   const { db } = cfg;
   const now = cfg.now ?? Date.now;
-  const service = createService(db, { judge: cfg.judge, concurrency: cfg.concurrency ?? 5, ...(cfg.random ? { random: cfg.random } : {}) });
+  const service = createService(db, cfg.random ? { random: cfg.random } : {});
   const app = express();
   app.disable("x-powered-by");
   app.use(express.json({ limit: "1mb" }));
@@ -90,7 +76,7 @@ export function createApp(cfg: AppConfig) {
 
   // Every route body runs through this, so an ActionError becomes a JSON answer with its status.
   const route =
-    (fn: (req: Request, res: Response) => unknown | Promise<unknown>) =>
+    (fn: (req: Request, res: Response) => unknown) =>
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const out = await fn(req, res);
@@ -153,28 +139,34 @@ export function createApp(cfg: AppConfig) {
     "/api/admin/state",
     route((req) => {
       asAdmin(req);
-      const teams = db.teams();
+      const startsAt = db.startsAt();
       const subs = db.submissions();
-      const judgements = db.judgements();
+      const deals = db.deals();
+      const problems = db.problemCards();
+      const crises = db.crisisCards();
       return {
         now: now(),
-        startsAt: db.startsAt(),
-        qualifyCount: db.qualifyCount(),
-        published: db.published(),
-        teams: teams.length,
-        dealt: db.deals().length,
-        cards: { problem: db.problemCards().length, crisis: db.crisisCards().length, price: db.priceCards().map((c) => c.label) },
-        rounds: ROUNDS.map((r) => ({
-          round: r,
-          max: rubricMax(r),
-          saved: subs.filter((s) => s.round === r).length,
-          complete: subs.filter((s) => s.round === r && s.complete).length,
-          judged: judgements.filter((j) => j.round === r && j.score !== null).length,
-          failed: judgements.filter((j) => j.round === r && j.score === null).length,
-          flagged: judgements.filter((j) => j.round === r && j.removed_lines.length > 0).length,
-          progress: service.progress(r),
-        })),
-        results: service.results(),
+        startsAt,
+        timetable: db.timetable(),
+        windows: startsAt === null ? [] : roundWindows(startsAt, db.timetable()),
+        dealt: deals.length,
+        cards: { problem: problems.length, crisis: crises.length },
+        limits: Object.fromEntries(ROUNDS.map((r) => [r, FORMS[r].wordLimit])),
+        teams: db.teams().map((t) => {
+          const d = deals.find((x) => x.team_id === t.id);
+          return {
+            code: t.code,
+            name: t.name,
+            problem: d ? problems.find((c) => c.number === d.problem_number)?.title ?? null : null,
+            crisis: d ? crises.find((c) => c.number === d.crisis_number)?.title ?? null : null,
+            rounds: Object.fromEntries(
+              ROUNDS.map((r) => {
+                const s = subs.find((x) => x.team_id === t.id && x.round === r);
+                return [r, s ? { words: s.words, complete: s.complete, savedAt: s.saved_at } : null];
+              }),
+            ),
+          };
+        }),
       };
     }),
   );
@@ -182,16 +174,21 @@ export function createApp(cfg: AppConfig) {
     "/api/admin/settings",
     route((req) => {
       asAdmin(req);
-      const { startsAt, qualifyCount } = req.body ?? {};
+      const { startsAt, briefingMinutes, round1Minutes, round2Minutes } = req.body ?? {};
       if (startsAt !== undefined) {
         const ms = startsAt === null ? null : Date.parse(String(startsAt));
         if (ms !== null && Number.isNaN(ms)) throw new ActionError("Start time is not a date.");
         db.setStartsAt(ms);
       }
-      if (qualifyCount !== undefined) {
-        const n = Number(qualifyCount);
-        if (!Number.isInteger(n) || n < 1) throw new ActionError("How many qualify must be a whole number.");
-        db.setQualifyCount(n);
+      if (briefingMinutes !== undefined || round1Minutes !== undefined || round2Minutes !== undefined) {
+        const t = db.timetable();
+        db.setTimetable({
+          briefingMinutes: briefingMinutes === undefined ? t.briefingMinutes : minutes(briefingMinutes, "Briefing", 0),
+          roundMinutes: {
+            1: round1Minutes === undefined ? t.roundMinutes[1] : minutes(round1Minutes, "Round 1", 1),
+            2: round2Minutes === undefined ? t.roundMinutes[2] : minutes(round2Minutes, "Round 2", 1),
+          },
+        });
       }
       return { ok: true };
     }),
@@ -200,8 +197,7 @@ export function createApp(cfg: AppConfig) {
     "/api/admin/teams",
     route((req) => {
       asAdmin(req);
-      const rows = parseCsv(String(req.body ?? ""));
-      const teams = rows.map((r) => ({ code: (r.code ?? "").toUpperCase(), name: r.name ?? "" }));
+      const teams = parseCsv(String(req.body ?? "")).map((r) => ({ code: (r.code ?? "").toUpperCase(), name: r.name ?? "" }));
       if (!teams.length || teams.some((t) => !/^[A-Z0-9-]{2,12}$/.test(t.code) || !t.name)) throw new ActionError("Teams CSV needs columns code, name (codes: 2–12 letters or digits).");
       if (new Set(teams.map((t) => t.code)).size !== teams.length) throw new ActionError("Team codes must be unique.");
       db.upsertTeams(teams);
@@ -219,11 +215,11 @@ export function createApp(cfg: AppConfig) {
     "/api/admin/cards/:kind",
     route((req) => {
       asAdmin(req);
-      if (db.startsAt() !== null && now() >= db.startsAt()! && db.deals().length) throw new ActionError("The session has started: cards are locked.", 409);
+      const startsAt = db.startsAt();
+      if (startsAt !== null && now() >= startsAt && db.deals().length) throw new ActionError("The session has started: cards are locked.", 409);
       const body = String(req.body ?? "");
       if (req.params.kind === "problem") db.replaceProblemCards(problemCardsFromCsv(body));
       else if (req.params.kind === "crisis") db.replaceCrisisCards(crisisCardsFromCsv(body));
-      else if (req.params.kind === "price") db.replacePriceCards(priceCardsFromJson(body));
       else throw new ActionError("No such card kind.", 404);
       return { ok: true };
     }),
@@ -235,53 +231,6 @@ export function createApp(cfg: AppConfig) {
       return service.deal(now(), req.body?.force === true);
     }),
   );
-  app.post(
-    "/api/admin/judge/:round",
-    route((req) => {
-      asAdmin(req);
-      const round = asRound(req.params.round);
-      // Judging takes minutes: start it and let the console poll /api/admin/state for progress.
-      const started = service.judgeRound(round, now(), req.body?.rejudge === true);
-      started.catch(() => undefined);
-      return new Promise((resolve, reject) => {
-        // Refusals (round still open, already running) come back at once; otherwise answer "started".
-        const t = setTimeout(() => resolve({ ok: true, started: true }), 50);
-        started.then(
-          (p) => {
-            clearTimeout(t);
-            resolve({ ok: true, progress: p });
-          },
-          (e) => {
-            clearTimeout(t);
-            reject(e);
-          },
-        );
-      });
-    }),
-  );
-  app.post(
-    "/api/admin/publish",
-    route((req) => {
-      asAdmin(req);
-      db.setPublished(req.body?.published === true);
-      return { ok: true };
-    }),
-  );
-  app.post(
-    "/api/admin/team/:code",
-    route((req) => {
-      asAdmin(req);
-      const team = db.teamByCode(String(req.params.code).toUpperCase());
-      if (!team) throw new ActionError("No such team.", 404);
-      const { disqualified, penalty } = req.body ?? {};
-      if (penalty !== undefined && (typeof penalty !== "number" || penalty < 0 || penalty > 300)) throw new ActionError("Penalty must be 0–300 points.");
-      db.updateTeam(team.id, {
-        ...(typeof disqualified === "boolean" ? { disqualified } : {}),
-        ...(penalty !== undefined ? { penalty } : {}),
-      });
-      return { ok: true };
-    }),
-  );
   app.get(
     "/api/admin/team/:code",
     route((req) => {
@@ -291,35 +240,42 @@ export function createApp(cfg: AppConfig) {
       const deal = db.dealFor(team.id);
       return {
         team,
-        problem: deal ? db.problemCards().find((c) => c.number === deal.problem_number) : null,
-        crisis: deal ? db.crisisCards().find((c) => c.number === deal.crisis_number) : null,
-        pricing: service.pricingOf(team.id),
-        rounds: ROUNDS.map((r) => ({ round: r, submission: db.submission(team.id, r), judgement: db.judgement(team.id, r) })),
+        problem: deal ? db.problemCards().find((c) => c.number === deal.problem_number) ?? null : null,
+        crisis: deal ? db.crisisCards().find((c) => c.number === deal.crisis_number) ?? null : null,
+        forms: FORMS,
+        rounds: ROUNDS.map((r) => ({ round: r, submission: db.submission(team.id, r) })),
       };
     }),
   );
+  // Every team's two submissions, one row per team, one column per field: for marking offline.
   app.get(
-    "/api/admin/results.csv",
+    "/api/admin/submissions.csv",
     route((req, res) => {
       asAdmin(req);
-      const rows = service.results();
-      res
-        .type("text/csv")
-        .attachment("screening-results.csv")
-        .send(
-          toCsv(
-            ["rank", "code", "name", "round1_idea", "round2_crisis", "round3_judge", "round3_market", "round3_pricing", "penalty", "total", "qualified", "disqualified"],
-            rows.map((r) => [r.rank ?? "", r.code, r.name, r.r1, r.r2, r.r3Judge, r.r3Market, r.r3, r.penalty, r.total, r.qualified ? "yes" : "no", r.disqualified ? "yes" : "no"]),
-          ),
-        );
-    }),
-  );
-  // The qualifying teams, in the shape the main night's seed expects (code,name).
-  app.get(
-    "/api/admin/qualified.csv",
-    route((req, res) => {
-      asAdmin(req);
-      res.type("text/csv").attachment("qualified-teams.csv").send(toCsv(["code", "name"], service.results().filter((r) => r.qualified).map((r) => [r.code, r.name])));
+      const deals = db.deals();
+      const problems = db.problemCards();
+      const crises = db.crisisCards();
+      const header = [
+        "code",
+        "name",
+        "problem_card",
+        "crisis_card",
+        ...ROUNDS.flatMap((r) => [`r${r}_words`, `r${r}_saved_at`, ...FORMS[r].fields.map((f) => `r${r}_${f.key}`)]),
+      ];
+      const rows = db.teams().map((t) => {
+        const d = deals.find((x) => x.team_id === t.id);
+        return [
+          t.code,
+          t.name,
+          d ? problems.find((c) => c.number === d.problem_number)?.title ?? "" : "",
+          d ? crises.find((c) => c.number === d.crisis_number)?.title ?? "" : "",
+          ...ROUNDS.flatMap((r) => {
+            const s = db.submission(t.id, r);
+            return [s?.words ?? "", s ? new Date(s.saved_at).toISOString() : "", ...FORMS[r].fields.map((f) => s?.content[f.key] ?? "")];
+          }),
+        ];
+      });
+      res.type("text/csv").attachment("screening-submissions.csv").send(toCsv(header, rows));
     }),
   );
 
