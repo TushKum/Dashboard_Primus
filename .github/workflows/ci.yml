@@ -15,3 +15,10 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      # Vercel's own build: it resolves TypeScript differently from a local tsc, so it catches
+      # errors (such as a tsconfig "types" entry it cannot resolve) that typecheck passes.
+      - name: Vercel build
+        run: |
+          mkdir -p .vercel
+          echo '{"projectId":"ci","orgId":"ci","settings":{"framework":"express"}}' > .vercel/project.json
+          npx -y vercel@latest build --yes
